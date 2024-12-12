@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect ,useMemo  } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Swal from 'sweetalert2';
 import mqtt from 'mqtt';
@@ -11,19 +11,17 @@ function Home() {
 
   const navigate = useNavigate();
 
-  const mqttOptions = {
+  const mqttOptions = useMemo(() => ({
     url: "wss://6bece45f0a054de68c7f5f00fe90a1ab.s1.eu.hivemq.cloud:8884/mqtt",
     username: "kimzey",
-    password: "MMI321project",
-    clientId: `home_component_${Math.random().toString(16).slice(2)}`
-  };
+    password: "MMI321project"
+  }), []); // dependency array ว่าง หมายถึงสร้างเพียงครั้งเดียว
 
   useEffect(() => {
     // MQTT Connection
     const client = mqtt.connect(mqttOptions.url, {
       username: mqttOptions.username,
-      password: mqttOptions.password,
-      clientId: mqttOptions.clientId
+      password: mqttOptions.password
     });
 
     client.on('connect', () => {
@@ -53,7 +51,7 @@ function Home() {
         client.end();
       }
     };
-  },[] );
+  },[mqttOptions] );
 
   useEffect(() => {
     // Previous localStorage and time-related code remains the same
