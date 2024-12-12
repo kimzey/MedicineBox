@@ -1,19 +1,65 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import Swal from 'sweetalert2'; // นำเข้า sweetalert2
+import Swal from 'sweetalert2';
+import mqtt from 'mqtt';
 
 function Home() {
   const [groupedMedicines, setGroupedMedicines] = useState({});
   const [currentDateTime, setCurrentDateTime] = useState('');
+  const [mqttClient, setMqttClient] = useState(null);
+  const [canSendTimeUp , setcanSendTimeUp ] = useState(true);
+
   const navigate = useNavigate();
 
+  const mqttOptions = {
+    url: "wss://6bece45f0a054de68c7f5f00fe90a1ab.s1.eu.hivemq.cloud:8884/mqtt",
+    username: "kimzey",
+    password: "MMI321project",
+    clientId: `home_component_${Math.random().toString(16).slice(2)}`
+  };
+
   useEffect(() => {
-    // ดึงข้อมูลยาจาก localStorage
+    // MQTT Connection
+    const client = mqtt.connect(mqttOptions.url, {
+      username: mqttOptions.username,
+      password: mqttOptions.password,
+      clientId: mqttOptions.clientId
+    });
+
+    client.on('connect', () => {
+      console.log('MQTT Connected');
+      client.subscribe('medicine/timeup');
+      setMqttClient(client);
+    });
+
+    // Message listener
+    client.on('message', (topic, message) => {
+      if (topic === 'medicine/timeup') {
+        const response = message.toString();
+        console.log(response);
+        
+        if (response === 'Success') {
+          // Stop sending TimeUp if Success is received
+          // client.unsubscribe('medicine/timeup');
+          console.log("change Fasle");
+          setcanSendTimeUp(false)
+        }
+      }
+    });
+
+    // Cleanup
+    return () => {
+      if (client) {
+        client.end();
+      }
+    };
+  },[] );
+
+  useEffect(() => {
+    // Previous localStorage and time-related code remains the same
     const data = JSON.parse(localStorage.getItem('confirmedMedicineData')) || [];
-    // เรียงข้อมูลตามเวลา (time)
     const sortedData = data.sort((a, b) => a.time.localeCompare(b.time));
 
-    // จัดกลุ่มยาโดยเวลา
     const grouped = sortedData.reduce((acc, medicine) => {
       if (!acc[medicine.time]) acc[medicine.time] = [];
       acc[medicine.time].push(medicine);
@@ -22,31 +68,52 @@ function Home() {
 
     setGroupedMedicines(grouped);
 
-    // ฟังก์ชันสำหรับอัปเดตเวลา
     const updateTime = () => {
       const date = new Date();
-      const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+      const options = { 
+        weekday: 'long', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric', 
+        hour: '2-digit', 
+        minute: '2-digit' 
+      };
       const formattedDateTime = date.toLocaleString('th-TH', options);
       setCurrentDateTime(formattedDateTime);
+
+      // Check medicine times for notifications
+      Object.keys(grouped).forEach(medicineTime => {
+        const currentTime = date.toLocaleTimeString('th-TH', { 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        });
+
+        if (medicineTime === currentTime && mqttClient) {
+          // Send TimeUp for matching times
+          // mqttClient.publish('medicine/timeup', JSON.stringify({
+          //   medicines: grouped[medicineTime],
+          //   timestamp: new Date().toISOString()
+          // }));
+          if(canSendTimeUp){
+            mqttClient.publish('medicine/timeup',"TimeUp");
+            // console.log("send");
+          }
+        }
+      });
     };
 
-    // เรียกใช้งาน updateTime ครั้งแรก
     updateTime();
-
-    // ตั้ง interval ให้ทำการอัปเดตทุกๆ 1 วินาที
     const interval = setInterval(updateTime, 1000);
 
-    // ล้าง interval เมื่อ component ถูกทำลาย
     return () => clearInterval(interval);
-  }, []);
+  }, [mqttClient, canSendTimeUp]);
 
+  // Rest of the component remains the same as in the original code
   const handleAddMedicine = () => {
-    // ไปที่หน้าเพิ่มยา
     navigate('/medicine-form1');
   };
 
   const handleDeleteMedicine = (medicineName) => {
-    // แสดง SweetAlert2 เพื่อยืนยันการลบ
     Swal.fire({
       title: 'คุณแน่ใจหรือไม่?',
       text: `ต้องการลบยา ${medicineName} หรือไม่?`,
@@ -56,16 +123,11 @@ function Home() {
       cancelButtonText: 'ยกเลิก',
     }).then((result) => {
       if (result.isConfirmed) {
-        // ดึงข้อมูลยาเก่าจาก localStorage
         const data = JSON.parse(localStorage.getItem('confirmedMedicineData')) || [];
-
-        // ลบยาตามชื่อ
         const updatedData = data.filter(medicine => medicine.medicineName !== medicineName);
 
-        // อัปเดตข้อมูลใน localStorage
         localStorage.setItem('confirmedMedicineData', JSON.stringify(updatedData));
 
-        // อัปเดตสถานะการแสดงผล
         const grouped = updatedData.reduce((acc, medicine) => {
           if (!acc[medicine.time]) acc[medicine.time] = [];
           acc[medicine.time].push(medicine);
@@ -73,7 +135,6 @@ function Home() {
         }, {});
         setGroupedMedicines(grouped);
 
-        // แสดงข้อความเมื่อการลบสำเร็จ
         Swal.fire('ลบสำเร็จ!', `${medicineName} ถูกลบจากรายการยาแล้ว.`, 'success');
       }
     });
@@ -83,7 +144,6 @@ function Home() {
     <div className="container mx-auto py-10 bg-gray-50 min-h-screen">
       <div className="bg-white shadow-lg rounded-xl w-full max-w-md p-6 mx-auto">
         <h1 className="text-2xl font-bold text-gray-800">สวัสดี!</h1>
-        {/* แสดงวันที่และเวลาปัจจุบัน */}
         <p className="text-gray-600 mt-2 mb-6">{currentDateTime}</p>
 
         {Object.keys(groupedMedicines).length === 0 ? (
@@ -106,7 +166,6 @@ function Home() {
                       </p>
                       <p className="text-gray-600">{medicine.medicineDays} วัน</p>
                     </div>
-                    {/* ปุ่มลบที่ขวาสุด */}
                     <button
                       onClick={() => handleDeleteMedicine(medicine.medicineName)}
                       className="ml-auto text-red-500 hover:text-red-700"
